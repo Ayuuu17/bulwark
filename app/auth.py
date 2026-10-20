@@ -84,6 +84,19 @@ def end_session(request: Request, response: Response) -> None:
     response.delete_cookie(SESSION_COOKIE, path="/", httponly=True, samesite="lax", secure=_secure_cookie(request))
 
 
+RESET_TTL = 3600  # one hour
+
+
+def create_reset_token(user_id: int) -> str:
+    token = secrets.token_urlsafe(32)
+    db.create_reset(_token_hash(token), user_id, time.time() + RESET_TTL)
+    return token
+
+
+def consume_reset_token(token: str) -> int | None:
+    return db.consume_reset(_token_hash(token)) if token else None
+
+
 def optional_user(request: Request) -> dict | None:
     token = request.cookies.get(SESSION_COOKIE)
     return db.session_user(_token_hash(token)) if token else None

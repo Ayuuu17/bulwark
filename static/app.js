@@ -5,6 +5,7 @@ const SECTIONS = ["start", "auth", "dashboard", "verify", "progress", "report"];
 const METHOD_LABEL = { dns: "DNS record", file: "file upload", local: "local dev" };
 const KIND_LABEL = { site: "Website report", deps: "Dependency report", code: "Code report", app: "App report" };
 const KIND_SUFFIX = { site: "", deps: " · dependencies", code: " · code", app: " · app" };
+const RING_LENGTH = 326.73; // circumference of the grade ring (r = 52)
 const $ = (id) => document.getElementById(id);
 
 let appName = "Bulwark";
@@ -14,9 +15,11 @@ let authMessage = null;
 let pendingUrl = null;
 let currentResult = null;
 let pollTimer = null;
+let progressTimer = null;
 let selectedFile = null;
 let selectedCode = null;
 let maxUploadMb = 100;
+let resetToken = null;
 
 class AuthRequired extends Error {}
 
@@ -129,33 +132,62 @@ function requireLogin(message, next, mode = "#signup") {
   go(mode);
 }
 
+const AUTH_MODES = {
+  signup: { title: "Create your account", sub: "Free. Keep your verified domains and every report in one place.",
+    submit: "Create account", switchText: "Already have an account?", switchLabel: "Log in", switchHref: "#login" },
+  login: { title: "Log in", sub: "Welcome back.", submit: "Log in",
+    switchText: "New here?", switchLabel: "Create an account", switchHref: "#signup" },
+  forgot: { title: "Reset your password", sub: "Enter your email and we'll send you a link to choose a new password.",
+    submit: "Send reset link", switchText: "Remembered it?", switchLabel: "Log in", switchHref: "#login" },
+  reset: { title: "Choose a new password", sub: "This signs you out everywhere else.", submit: "Set new password",
+    switchText: "Changed your mind?", switchLabel: "Log in", switchHref: "#login" },
+};
+
 function showAuth(mode) {
-  const signup = mode === "signup";
+  const config = AUTH_MODES[mode];
   $("auth-form").dataset.mode = mode;
-  $("auth-title").textContent = signup ? "Create your account" : "Log in";
-  $("auth-sub").textContent = authMessage
-    || (signup ? "Free. Keep your verified domains and every report in one place." : "Welcome back.");
-  $("auth-password").setAttribute("autocomplete", signup ? "new-password" : "current-password");
-  $("auth-hint").hidden = !signup;
-  $("auth-submit").textContent = signup ? "Create account" : "Log in";
-  $("auth-switch-text").textContent = signup ? "Already have an account?" : "New here?";
-  $("auth-switch-link").textContent = signup ? "Log in" : "Create an account";
-  $("auth-switch-link").href = signup ? "#login" : "#signup";
+  $("auth-title").textContent = config.title;
+  $("auth-sub").textContent = authMessage || config.sub;
+  $("auth-email-group").hidden = mode === "reset";
+  $("auth-password-group").hidden = mode === "forgot";
+  $("auth-password").setAttribute("autocomplete", mode === "login" ? "current-password" : "new-password");
+  $("auth-hint").hidden = mode === "login";
+  $("auth-terms").hidden = mode !== "signup";
+  $("auth-forgot").hidden = mode !== "login";
+  $("auth-submit").textContent = config.submit;
+  $("auth-switch-text").textContent = config.switchText;
+  $("auth-switch-link").textContent = config.switchLabel;
+  $("auth-switch-link").href = config.switchHref;
   $("auth-error").hidden = true;
+  $("auth-info").hidden = true;
   show("auth");
-  $("auth-email").focus();
+  (mode === "reset" ? $("auth-password") : $("auth-email")).focus();
 }
 
 async function onAuthSubmit(event) {
   event.preventDefault();
   const button = $("auth-submit");
   const mode = $("auth-form").dataset.mode;
-  button.disabled = true;
+  const email = $("auth-email").value;
+  const password = $("auth-password").value;
   $("auth-error").hidden = true;
+  if (mode === "signup" && !$("auth-accept").checked) {
+    $("auth-error").textContent = "Please accept the Terms of Service and Acceptable Use Policy to continue.";
+    $("auth-error").hidden = false;
+    return;
+  }
+  button.disabled = true;
   try {
-    const { user } = await api(`/api/auth/${mode}`, {
-      body: { email: $("auth-email").value, password: $("auth-password").value },
-    });
+    if (mode === "forgot") {
+      const { message } = await api("/api/auth/forgot", { body: { email } });
+      $("auth-info").textContent = message;
+      $("auth-info").hidden = false;
+      return;
+    }
+    const { user } = mode === "reset"
+      ? await api("/api/auth/reset", { body: { token: resetToken, password } })
+      : await api(`/api/auth/${mode}`, { body: { email, password, accept_terms: mode === "signup" } });
+    resetToken = null;
     $("auth-password").value = "";
     setUser(user);
     authMessage = null;
@@ -281,13 +313,14 @@ function onCodeSubmit(event) {
   if (!selectedCode) return showError("Choose a .zip, .apk or .ipa file first.");
   if (!/\.(zip|apk|ipa)$/i.test(selectedCode.name)) return showError("Upload a .zip of your project, an .apk or an .ipa.");
   if (selectedCode.size > maxUploadMb * 1e6) return showError(`That file is over ${maxUploadMb} MB.`);
+  if (!$("code-attest").checked) return showError("Please confirm you own this code or are authorized to scan it.");
   if (!me) return requireLogin("Create a free account to scan your code.", submitCode);
   submitCode();
 }
 
 async function submitCode() {
   const ai = !$("ai-option").hidden && $("code-ai").checked;
-  const params = new URLSearchParams({ filename: selectedCode.name, ai: String(ai) });
+  const params = new URLSearchParams({ filename: selectedCode.name, ai: String(ai), attest: "true" });
   try {
     const { id } = await api(`/api/code?${params}`, { raw: selectedCode });
     go(`#scan=${id}`);
@@ -319,9 +352,22 @@ async function submitDeps() {
 
 function route() {
   clearTimeout(pollTimer);
+  clearInterval(progressTimer);
+  $("progress-steps").dataset.kind = "";
   const hash = location.hash;
   const scan = hash.match(/^#scan=([a-f0-9]{32})$/);
-  if (hash === "#login" || hash === "#signup") return showAuth(hash.slice(1));
+  const reset = hash.match(/^#reset=([A-Za-z0-9_-]{20,})$/);
+  if (reset) {
+    resetToken = reset[1];
+    history.replaceState(null, "", location.pathname); // keep the token out of history
+    authMessage = null;
+    return showAuth("reset");
+  }
+  if (["#login", "#signup", "#forgot"].includes(hash)) return showAuth(hash.slice(1));
+  if (hash === "#scanner" || hash === "#how") {
+    show("start");
+    return requestAnimationFrame(() => $(hash.slice(1)).scrollIntoView({ behavior: "smooth" }));
+  }
   if ((scan || hash === "#dashboard") && !me) {
     return requireLogin("Log in to see your reports.", () => go(hash), "#login");
   }
@@ -353,14 +399,64 @@ async function poll(id) {
   $("progress-sub").textContent = scan.kind === "code"
     ? "Code scans take a few seconds, or a few minutes with AI review. You can leave this page; the report will be in your dashboard."
     : "This usually takes 5–20 seconds.";
+  startProgressSteps(scan.kind);
   pollTimer = setTimeout(() => poll(id), 1500);
+}
+
+// Shows which part of the scan is likely running. The backend does them concurrently, so these are
+// paced estimates for feedback, not reported progress.
+const PROGRESS_STEPS = {
+  site: ["Resolving host", "Checking HTTPS and certificate", "Reading security headers",
+    "Inspecting cookies and page content", "Looking up JavaScript libraries", "Checking DNS email records"],
+  code: ["Unpacking archive in memory", "Searching for leaked secrets", "Running code security rules",
+    "Checking app and cloud configuration", "Looking up dependencies", "Finishing up"],
+  app: ["Unpacking app in memory", "Decoding app configuration", "Searching for embedded secrets",
+    "Checking for insecure endpoints"],
+  deps: ["Reading dependency file", "Querying the vulnerability database", "Matching fixed versions"],
+};
+
+function startProgressSteps(kind) {
+  const steps = PROGRESS_STEPS[kind] || PROGRESS_STEPS.site;
+  const list = $("progress-steps");
+  if (list.dataset.kind === kind) return; // already running for this scan
+  list.dataset.kind = kind;
+  clearInterval(progressTimer);
+  const items = steps.map((text) => h("li", {}, text));
+  list.replaceChildren(...items);
+  let index = 0;
+  const advance = () => {
+    items.forEach((li, i) => { li.className = i < index ? "done" : i === index ? "active" : ""; });
+    index += 1;
+    if (index > items.length) clearInterval(progressTimer);
+  };
+  advance();
+  progressTimer = setInterval(advance, 1800);
 }
 
 /* ---------- dashboard ---------- */
 
+function renderDashStats(scans, domains) {
+  const done = scans.filter((s) => s.status === "done");
+  const open = done.reduce((total, s) => total + SEVERITIES
+    .filter((sev) => sev !== "info" && sev !== "low")
+    .reduce((n, sev) => n + ((s.summary && s.summary[sev]) || 0), 0), 0);
+  const critical = done.reduce((n, s) => n + ((s.summary && s.summary.critical) || 0), 0);
+  const stats = [
+    [String(done.length), "reports"],
+    [String(domains.length), domains.length === 1 ? "verified domain" : "verified domains"],
+    [String(open), "high-priority issues"],
+    [String(critical), "critical issues"],
+  ];
+  $("dash-stats").replaceChildren(...stats.map(([value, label], i) =>
+    h("div", { class: "dash-stat" },
+      h("strong", { class: i >= 2 && Number(value) > 0 ? "sev-high" : "" }, value),
+      h("span", {}, label))));
+}
+
 function loadDashboard() {
   $("dash-email").textContent = me.email;
   const loading = () => h("p", { class: "empty-line" }, "Loading…");
+  $("dash-stats").replaceChildren();
   $("domains").replaceChildren(loading());
   $("history").replaceChildren(loading());
   for (const id of ["password-status", "delete-status"]) $(id).textContent = "";
@@ -372,6 +468,7 @@ async function refreshDashboard() {
   try {
     const [{ domains }, { scans }] = await Promise.all([api("/api/domains"), api("/api/scans")]);
     if (location.hash !== "#dashboard") return;
+    renderDashStats(scans, domains);
     renderDomains(domains);
     renderHistory(scans);
     if (scans.some((s) => s.status === "queued" || s.status === "running")) {
@@ -482,9 +579,14 @@ async function onDeleteSubmit(event) {
 
 function renderReport(result) {
   currentResult = result;
-  const grade = $("grade");
-  grade.textContent = result.grade;
-  grade.className = `grade grade-${result.grade}`;
+  $("grade").textContent = result.grade;
+  $("grade-score").textContent = `${result.score}/100`;
+  const ringBox = document.querySelector(".grade-ring");
+  ringBox.className = `grade-ring grade-${result.grade}`;
+  const ring = $("ring-value");
+  ring.style.setProperty("stroke-dashoffset", String(RING_LENGTH));
+  requestAnimationFrame(() => requestAnimationFrame(() =>
+    ring.style.setProperty("stroke-dashoffset", String(RING_LENGTH * (1 - result.score / 100)))));
 
   $("report-kind").textContent = KIND_LABEL[result.kind] || "Report";
   $("report-target").textContent = result.kind === "site" ? result.final_url || result.target : result.target;
@@ -624,5 +726,8 @@ document.addEventListener("DOMContentLoaded", async () => {
     $("dev-badge").hidden = !cfg.dev_mode;
     $("ai-option").hidden = !cfg.ai_review;
     maxUploadMb = cfg.max_upload_mb;
+    if (cfg.ai_review && cfg.ai_provider) {
+      $("ai-provider").textContent = ` Files are reviewed by ${cfg.ai_provider}.`;
+    }
   } catch { /* keep defaults */ }
 });

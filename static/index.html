@@ -4,15 +4,24 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Bulwark — security scanner for websites, code and apps</title>
+  <meta name="description" content="Find security issues in your website, source code and mobile apps, with plain-English explanations and copy-paste fixes.">
+  <meta name="theme-color" content="#05080f">
+  <meta property="og:title" content="Bulwark — find security holes before attackers do">
+  <meta property="og:description" content="Scan your website, code and Android/iOS apps. Every issue explained, every fix ready to paste.">
+  <meta property="og:type" content="website">
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/static/styles.css">
   <script src="/static/app.js" defer></script>
 </head>
 <body>
+  <div class="bg-grid" aria-hidden="true"></div>
+  <div class="bg-glow" aria-hidden="true"></div>
+
   <header class="topbar">
     <div class="wrap topbar-inner">
-      <a href="/" class="brand"><span class="logo" aria-hidden="true"></span><span data-app-name>Bulwark</span></a>
+      <a href="#" class="brand"><span class="logo" aria-hidden="true"></span><span data-app-name>Bulwark</span></a>
       <div class="topbar-right">
-        <span id="dev-badge" class="dev-badge" hidden>Dev mode</span>
+        <span id="dev-badge" class="dev-badge" hidden>dev mode</span>
         <nav id="nav" class="nav" aria-label="Account"></nav>
       </div>
     </div>
@@ -21,97 +30,181 @@
   <main class="wrap">
     <section id="start">
       <div class="hero">
-        <h1>Find the security holes in your website, code and apps before attackers do.</h1>
-        <p class="lede">Scan your live site, your source code, or your Android/iOS app. You get a report that
-          explains every issue in plain language, why it matters, and exactly how to fix it.</p>
-      </div>
-
-      <div class="tabs" role="tablist">
-        <button type="button" role="tab" class="tab" aria-selected="true" data-tab="site">Website</button>
-        <button type="button" role="tab" class="tab" aria-selected="false" data-tab="code">Code &amp; apps</button>
-        <button type="button" role="tab" class="tab" aria-selected="false" data-tab="deps">Dependencies</button>
-      </div>
-
-      <form id="site-form" class="card panel" data-panel="site" novalidate>
-        <label for="url" class="label">Website address</label>
-        <div class="row">
-          <input id="url" name="url" type="text" inputmode="url" autocomplete="url" spellcheck="false"
-                 placeholder="https://yourwebsite.com" required>
-          <button type="submit" class="btn primary">Scan website</button>
+        <div class="hero-text">
+          <p class="eyebrow"><span class="pulse-dot" aria-hidden="true"></span> Security scanning for builders</p>
+          <h1>Find the holes in your <span class="gradient-text">website, code and apps</span> before attackers do.</h1>
+          <p class="lede">Scan your live site, your source code, or your Android and iOS apps. Every issue comes
+            with a plain-English explanation and a fix you can paste straight into your project.</p>
+          <div class="hero-cta">
+            <a href="#scanner" class="btn primary big" id="hero-start">Start a free scan</a>
+            <a href="#how" class="btn ghost big">How it works</a>
+          </div>
+          <ul class="trust-row">
+            <li>Only scans what you own</li>
+            <li>Code analyzed in memory, never stored</li>
+            <li>Non-intrusive checks</li>
+          </ul>
         </div>
-        <p class="hint">Free account required. You'll verify that you own the domain first: we only scan sites
-          with the owner's permission, and our checks are non-intrusive (we look at what your site already shows
-          every visitor).</p>
-      </form>
-
-      <form id="code-form" class="card panel" data-panel="code" hidden novalidate>
-        <span class="label">Your code or app</span>
-        <label class="dropzone" for="code-file">
-          <input type="file" id="code-file" accept=".zip,.apk,.ipa">
-          <strong id="code-drop-title">Choose a file or drop it here</strong>
-          <span class="muted">Project source as a .zip (any language) · Android .apk · iOS .ipa</span>
-        </label>
-        <label id="ai-option" class="check" hidden>
-          <input type="checkbox" id="code-ai" checked>
-          <span><strong>Include AI deep review.</strong> <span class="muted">Finds logic flaws rules can't, like missing
-            permission checks. The most security-relevant files are sent to our AI model for review.</span></span>
-        </label>
-        <div class="row end"><button type="submit" class="btn primary">Scan code</button></div>
-        <p class="hint">We check for leaked keys, injection and XSS bugs, unsafe crypto, risky Android/iOS settings,
-          open Firebase databases and vulnerable dependencies. Uploads are analyzed in memory and never stored.</p>
-      </form>
-
-      <form id="deps-form" class="card panel" data-panel="deps" hidden novalidate>
-        <span class="label">Dependency file</span>
-        <label class="dropzone" for="manifest">
-          <input type="file" id="manifest" accept=".json,.txt,.lock,.mod,.toml,.gradle,.kts,.xml,.lockfile">
-          <strong id="dropzone-title">Choose a file or drop it here</strong>
-          <span id="dropzone-sub" class="muted">package-lock.json · yarn.lock · requirements.txt · poetry.lock · go.mod ·
-            Gemfile.lock · composer.lock · Cargo.lock · pubspec.lock · build.gradle · pom.xml</span>
-        </label>
-        <div class="row end"><button type="submit" class="btn primary">Check dependencies</button></div>
-        <p class="hint">We look up each package version in the public OSV.dev vulnerability database.
-          Only package names and versions are sent there, never your code.</p>
-      </form>
-
-      <p id="form-error" class="alert" role="alert" hidden></p>
-
-      <div class="features">
-        <div class="feature"><h3>Code review</h3><p>SQL and command injection, XSS, eval, broken JWT checks, unsafe crypto and deserialization across 10+ languages.</p></div>
-        <div class="feature"><h3>AI deep review</h3><p>An AI reviewer reads your most sensitive files to catch logic flaws like missing ownership checks.</p></div>
-        <div class="feature"><h3>Mobile apps</h3><p>Debuggable builds, open Firebase databases, cleartext traffic, exported components, and secrets hidden inside APKs and IPAs.</p></div>
-        <div class="feature"><h3>Leaked secrets</h3><p>AWS, Stripe, GitHub, OpenAI and other keys, database passwords and committed .env files. Always shown redacted.</p></div>
-        <div class="feature"><h3>Vulnerable dependencies</h3><p>Every package in npm, Python, Gradle, Flutter, Go, Ruby, PHP and Rust lockfiles, checked against OSV.dev.</p></div>
-        <div class="feature"><h3>Live website</h3><p>HTTPS and certificates, security headers, cookies, outdated JS libraries, and email spoofing protection.</p></div>
       </div>
+
+      <div class="stats">
+        <div class="stat"><span class="stat-num">30</span><span class="stat-plus">+</span><span class="stat-label">code security rules</span></div>
+        <div class="stat"><span class="stat-num">10</span><span class="stat-plus">+</span><span class="stat-label">languages &amp; frameworks</span></div>
+        <div class="stat"><span class="stat-num">8</span><span class="stat-label">package ecosystems</span></div>
+        <div class="stat"><span class="stat-num">0</span><span class="stat-label">bytes of your code kept</span></div>
+      </div>
+
+      <div class="console" id="scanner">
+        <div class="console-head">
+          <span class="mono muted">&gt; choose a target</span>
+          <div class="tabs" role="tablist">
+            <button type="button" role="tab" class="tab" aria-selected="true" data-tab="site">Website</button>
+            <button type="button" role="tab" class="tab" aria-selected="false" data-tab="code">Code &amp; apps</button>
+            <button type="button" role="tab" class="tab" aria-selected="false" data-tab="deps">Dependencies</button>
+          </div>
+        </div>
+
+        <form id="site-form" class="panel" data-panel="site" novalidate>
+          <label for="url" class="label">Website address</label>
+          <div class="row">
+            <input id="url" name="url" type="text" inputmode="url" autocomplete="url" spellcheck="false"
+                   placeholder="https://yourwebsite.com" required>
+            <button type="submit" class="btn primary">Scan website</button>
+          </div>
+          <p class="hint">You'll verify that you own the domain first. We only scan sites with the owner's
+            permission, and our checks only look at what your site already shows every visitor.</p>
+        </form>
+
+        <form id="code-form" class="panel" data-panel="code" hidden novalidate>
+          <span class="label">Your code or app</span>
+          <label class="dropzone" for="code-file">
+            <input type="file" id="code-file" accept=".zip,.apk,.ipa">
+            <span class="drop-icon" aria-hidden="true"></span>
+            <strong id="code-drop-title">Choose a file or drop it here</strong>
+            <span class="muted small">Project source as a .zip (any language) · Android .apk · iOS .ipa</span>
+          </label>
+          <label id="ai-option" class="check" hidden>
+            <input type="checkbox" id="code-ai" checked>
+            <span><strong>Include AI deep review.</strong> <span class="muted">Finds logic flaws rules can't, like
+              missing permission checks. The most security-relevant files are sent to our AI provider for
+              review.<span id="ai-provider"></span> See the <a href="/privacy" target="_blank">Privacy Policy</a>.</span></span>
+          </label>
+          <label class="check">
+            <input type="checkbox" id="code-attest">
+            <span>I own this code or app, or I'm authorized by its owner to have it scanned.</span>
+          </label>
+          <div class="row end"><button type="submit" class="btn primary">Scan code</button></div>
+        </form>
+
+        <form id="deps-form" class="panel" data-panel="deps" hidden novalidate>
+          <span class="label">Dependency file</span>
+          <label class="dropzone" for="manifest">
+            <input type="file" id="manifest" accept=".json,.txt,.lock,.mod,.toml,.gradle,.kts,.xml,.lockfile">
+            <span class="drop-icon" aria-hidden="true"></span>
+            <strong id="dropzone-title">Choose a file or drop it here</strong>
+            <span id="dropzone-sub" class="muted small">package-lock.json · yarn.lock · requirements.txt · poetry.lock ·
+              go.mod · Gemfile.lock · composer.lock · Cargo.lock · pubspec.lock · build.gradle · pom.xml</span>
+          </label>
+          <div class="row end"><button type="submit" class="btn primary">Check dependencies</button></div>
+          <p class="hint">Each package version is looked up in the public OSV.dev vulnerability database. Only
+            package names and versions are sent there, never your code.</p>
+        </form>
+
+        <p id="form-error" class="alert" role="alert" hidden></p>
+      </div>
+
+      <section class="section" id="how">
+        <p class="eyebrow">How it works</p>
+        <h2>Three steps from "is this safe?" to fixed.</h2>
+        <div class="steps">
+          <div class="step"><span class="step-num">01</span><h3>Connect</h3>
+            <p>Verify your domain with a DNS record or file, or upload your project as a .zip, .apk or .ipa.</p></div>
+          <div class="step"><span class="step-num">02</span><h3>Scan</h3>
+            <p>30+ rules, a secret detector, app-config checks and a vulnerability database run in seconds. An
+              optional AI reviewer looks for logic flaws.</p></div>
+          <div class="step"><span class="step-num">03</span><h3>Fix</h3>
+            <p>Each finding explains the risk in plain English and gives copy-paste fixes for your stack. Re-scan
+              to confirm.</p></div>
+        </div>
+      </section>
+
+      <section class="section">
+        <p class="eyebrow">What we check</p>
+        <h2>One scanner for everything you ship.</h2>
+        <div class="features">
+          <div class="feature"><span class="feature-icon i-code" aria-hidden="true"></span><h3>Code review</h3><p>SQL and command injection, XSS, eval, broken JWT checks, unsafe crypto and deserialization across 10+ languages.</p></div>
+          <div class="feature"><span class="feature-icon i-ai" aria-hidden="true"></span><h3>AI deep review</h3><p>An AI reviewer reads your most sensitive files to catch logic flaws like missing ownership checks.</p></div>
+          <div class="feature"><span class="feature-icon i-phone" aria-hidden="true"></span><h3>Mobile apps</h3><p>Debuggable builds, open Firebase databases, cleartext traffic, exported components, and secrets inside APKs and IPAs.</p></div>
+          <div class="feature"><span class="feature-icon i-key" aria-hidden="true"></span><h3>Leaked secrets</h3><p>AWS, Stripe, GitHub, OpenAI and other keys, database passwords and committed .env files. Always shown redacted.</p></div>
+          <div class="feature"><span class="feature-icon i-box" aria-hidden="true"></span><h3>Vulnerable dependencies</h3><p>Every package in npm, Python, Gradle, Flutter, Go, Ruby, PHP and Rust lockfiles, checked against OSV.dev.</p></div>
+          <div class="feature"><span class="feature-icon i-globe" aria-hidden="true"></span><h3>Live website</h3><p>HTTPS and certificates, security headers, cookies, outdated JS libraries and email-spoofing protection.</p></div>
+        </div>
+      </section>
+
+      <section class="section faq">
+        <p class="eyebrow">Questions</p>
+        <h2>Straight answers.</h2>
+        <details><summary>Can I scan any website?</summary>
+          <p>No. You can only scan domains you prove you control, with a DNS record or a file on the site. Scanning
+            systems you don't own or have permission to test is against our <a href="/acceptable-use">Acceptable
+            Use Policy</a> and may be illegal.</p></details>
+        <details><summary>Will a scan break or slow down my site?</summary>
+          <p>No. Website scans make a handful of normal requests, like one visitor opening your homepage. We never
+            try to log in, guess hidden pages or send attack payloads.</p></details>
+        <details><summary>Do you keep my code?</summary>
+          <p>No. Uploads are analyzed in memory and discarded when the scan finishes. Your report keeps short
+            snippets (single lines) so you can find each issue, with secrets redacted.</p></details>
+        <details><summary>Who sees my code if I turn on AI review?</summary>
+          <p>The most security-relevant files are sent to our AI provider to be reviewed, under that provider's
+            data terms. You can switch AI review off for any scan. See the <a href="/privacy">Privacy Policy</a>.</p></details>
+        <details><summary>Does this replace a penetration test?</summary>
+          <p>No. Automated scanning catches common, well-known problems quickly and cheaply. A manual test by a
+            qualified professional can find issues automation can't.</p></details>
+      </section>
     </section>
 
     <section id="auth" hidden>
       <div class="card auth-card">
+        <p class="eyebrow mono" id="auth-eyebrow">&gt; account</p>
         <h2 id="auth-title">Create your account</h2>
         <p id="auth-sub" class="muted">Keep your verified domains and every report in one place.</p>
         <form id="auth-form" class="stack" novalidate>
-          <label class="label" for="auth-email">Email</label>
-          <input id="auth-email" type="email" autocomplete="email" spellcheck="false" required>
-          <label class="label" for="auth-password">Password</label>
-          <input id="auth-password" type="password" autocomplete="new-password" required>
-          <p id="auth-hint" class="hint">At least 10 characters.</p>
+          <div id="auth-email-group">
+            <label class="label" for="auth-email">Email</label>
+            <input id="auth-email" type="email" autocomplete="email" spellcheck="false" required>
+          </div>
+          <div id="auth-password-group">
+            <label class="label" for="auth-password">Password</label>
+            <input id="auth-password" type="password" autocomplete="new-password" required>
+            <p id="auth-hint" class="hint">At least 10 characters.</p>
+          </div>
+          <label class="check" id="auth-terms">
+            <input type="checkbox" id="auth-accept">
+            <span>I agree to the <a href="/terms" target="_blank">Terms of Service</a> and
+              <a href="/acceptable-use" target="_blank">Acceptable Use Policy</a>, and I've read the
+              <a href="/privacy" target="_blank">Privacy Policy</a>.</span>
+          </label>
           <button type="submit" id="auth-submit" class="btn primary block">Create account</button>
         </form>
         <p id="auth-error" class="alert" role="alert" hidden></p>
+        <p id="auth-info" class="note" role="status" hidden></p>
         <p class="auth-switch"><span id="auth-switch-text">Already have an account?</span>
           <a id="auth-switch-link" href="#login">Log in</a></p>
+        <p class="auth-switch" id="auth-forgot"><a href="#forgot">Forgot your password?</a></p>
       </div>
     </section>
 
     <section id="dashboard" hidden>
       <div class="dash-head">
         <div>
-          <h1>Dashboard</h1>
+          <p class="eyebrow mono">&gt; dashboard</p>
+          <h1>Your security overview</h1>
           <p id="dash-email" class="muted"></p>
         </div>
-        <a href="#" class="btn primary">New scan</a>
+        <a href="#scanner" class="btn primary">New scan</a>
       </div>
+
+      <div class="dash-stats" id="dash-stats"></div>
 
       <div class="card">
         <h2>Verified domains</h2>
@@ -126,7 +219,13 @@
       </div>
 
       <details class="card account">
-        <summary>Account settings</summary>
+        <summary>Account &amp; privacy</summary>
+        <div class="stack narrow">
+          <h3>Your data</h3>
+          <p class="muted small">Download everything we hold about your account: profile, verified domains and
+            every report.</p>
+          <a href="/api/account/export" class="btn" download>Download my data</a>
+        </div>
         <form id="password-form" class="stack narrow" novalidate>
           <h3>Change password</h3>
           <label class="label" for="pw-current">Current password</label>
@@ -148,7 +247,8 @@
     </section>
 
     <section id="verify" class="card" hidden>
-      <h2>Verify you own <span id="verify-host"></span></h2>
+      <p class="eyebrow mono">&gt; verify ownership</p>
+      <h2>Prove you own <span id="verify-host" class="accent"></span></h2>
       <p class="muted">Use either option. You only need to do this once per domain.</p>
       <div class="methods">
         <div class="method">
@@ -178,14 +278,21 @@
     </section>
 
     <section id="progress" class="card progress" hidden>
-      <div class="spinner" aria-hidden="true"></div>
+      <div class="radar" aria-hidden="true"><span class="radar-sweep"></span></div>
       <h2 id="progress-title">Scanning…</h2>
       <p id="progress-sub" class="muted">This usually takes 5–20 seconds.</p>
+      <ol id="progress-steps" class="progress-steps"></ol>
     </section>
 
     <section id="report" hidden>
       <div class="card report-head">
-        <div id="grade" class="grade" aria-label="Security grade"></div>
+        <div class="grade-ring" aria-label="Security grade">
+          <svg viewBox="0 0 120 120" aria-hidden="true">
+            <circle class="ring-track" cx="60" cy="60" r="52"></circle>
+            <circle class="ring-value" id="ring-value" cx="60" cy="60" r="52"></circle>
+          </svg>
+          <div class="grade-text"><span id="grade"></span><span class="grade-score" id="grade-score"></span></div>
+        </div>
         <div class="head-text">
           <p class="eyebrow" id="report-kind"></p>
           <h2 id="report-target"></h2>
@@ -209,9 +316,20 @@
     </section>
   </main>
 
-  <footer class="wrap footer">
-    <p>Automated checks catch common misconfigurations and known-vulnerable components. They don't replace a
-      full manual penetration test.</p>
+  <footer class="footer">
+    <div class="wrap footer-inner">
+      <div>
+        <a href="#" class="brand small"><span class="logo" aria-hidden="true"></span><span data-app-name>Bulwark</span></a>
+        <p class="muted small">Automated checks catch common misconfigurations and known-vulnerable components.
+          They don't replace a manual penetration test.</p>
+      </div>
+      <nav class="footer-links" aria-label="Legal">
+        <a href="/terms">Terms</a>
+        <a href="/privacy">Privacy</a>
+        <a href="/acceptable-use">Acceptable use</a>
+        <a href="/security-policy">Security</a>
+      </nav>
+    </div>
   </footer>
 </body>
 </html>

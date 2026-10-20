@@ -1,3 +1,5 @@
+import time
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -16,8 +18,8 @@ def client(tmp_path, monkeypatch):
         yield c
 
 
-def signup(client, email="a@example.com", password=PASSWORD):
-    return client.post("/api/auth/signup", json={"email": email, "password": password})
+def signup(client, email="a@example.com", password=PASSWORD, accept=True):
+    return client.post("/api/auth/signup", json={"email": email, "password": password, "accept_terms": accept})
 
 
 def test_password_hashing():
@@ -40,8 +42,16 @@ def test_signup_sets_secure_session_cookie(client):
 def test_signup_validation(client):
     assert signup(client, "not-an-email").status_code == 400
     assert signup(client, password="short").status_code == 400
+    assert signup(client, accept=False).status_code == 400  # terms must be accepted
     assert signup(client).status_code == 200
     assert signup(client).status_code == 409
+
+
+def test_signup_records_accepted_terms(client):
+    signup(client)
+    user = db.get_user_by_email("a@example.com")
+    assert user["terms_version"] == config.TERMS_VERSION
+    assert user["terms_accepted_at"] > 0
 
 
 def test_login_logout(client):
@@ -137,3 +147,140 @@ def test_delete_account_removes_data(client):
 def test_tokens_differ_per_user_and_host():
     assert verification.token_for(1, "a.com") != verification.token_for(2, "a.com")
     assert verification.token_for(1, "a.com") != verification.token_for(1, "b.com")
+
+
+# --- password reset ---
+
+def test_password_reset_flow(client, monkeypatch):
+    sent = {}
+
+    async def fake_send(to, subject, body):
+        sent.update(to=to, body=body)
+        return True
+    monkeypatch.setattr(main.mailer, "send", fake_send)
+
+    signup(client)
+    client.post("/api/auth/logout")
+    res = client.post("/api/auth/forgot", json={"email": "a@example.com"})
+    assert res.status_code == 200 and "If that email has an account" in res.json()["message"]
+    token = sent["body"].split("#reset=")[1].split()[0]
+
+    assert client.post("/api/auth/reset", json={"token": token, "password": "short"}).status_code == 400
+    ok = client.post("/api/auth/reset", json={"token": token, "password": "a brand new password"})
+    assert ok.status_code == 200
+    assert client.get("/api/auth/me").json()["user"]["email"] == "a@example.com"
+
+    # the link works only once, and the old password no longer does
+    assert client.post("/api/auth/reset", json={"token": token, "password": "another password!"}).status_code == 400
+    client.post("/api/auth/logout")
+    assert client.post("/api/auth/login", json={"email": "a@example.com", "password": PASSWORD}).status_code == 401
+    assert client.post("/api/auth/login",
+                       json={"email": "a@example.com", "password": "a brand new password"}).status_code == 200
+
+
+def test_forgot_password_hides_whether_the_email_exists(client, monkeypatch):
+    calls = []
+
+    async def fake_send(to, subject, body):
+        calls.append(to)
+        return True
+    monkeypatch.setattr(main.mailer, "send", fake_send)
+    known = client.post("/api/auth/forgot", json={"email": "nobody@example.com"})
+    assert known.status_code == 200 and calls == []
+
+
+def test_reset_signs_out_other_sessions(client, monkeypatch):
+    sent = {}
+
+    async def fake_send(to, subject, body):
+        sent["body"] = body
+        return True
+    monkeypatch.setattr(main.mailer, "send", fake_send)
+    signup(client)
+    other = TestClient(main.app, base_url="https://testserver")
+    other.post("/api/auth/login", json={"email": "a@example.com", "password": PASSWORD})
+    client.post("/api/auth/forgot", json={"email": "a@example.com"})
+    token = sent["body"].split("#reset=")[1].split()[0]
+    client.post("/api/auth/reset", json={"token": token, "password": "yet another password"})
+    assert other.get("/api/auth/me").json()["user"] is None
+
+
+# --- privacy: export and retention ---
+
+def test_export_contains_everything_and_needs_login(client):
+    assert client.get("/api/account/export").status_code == 401
+    signup(client)
+    user = db.get_user_by_email("a@example.com")["id"]
+    db.mark_verified(user, "example.com", "dns")
+    scan_id = db.create_scan(user, "code", "app.zip", attested=True)
+    db.update_scan(scan_id, "done", result={"grade": "A", "score": 95, "summary": {}})
+    res = client.get("/api/account/export")
+    assert res.headers["content-disposition"].startswith("attachment")
+    data = res.json()
+    assert data["account"]["email"] == "a@example.com"
+    assert [d["host"] for d in data["verified_domains"]] == ["example.com"]
+    assert data["scans"][0]["attested"] == 1 and data["scans"][0]["result"]["grade"] == "A"
+
+
+def test_retention_deletes_old_reports_but_keeps_running_ones(client):
+    signup(client)
+    user = db.get_user_by_email("a@example.com")["id"]
+    old = db.create_scan(user, "site", "old.example.com")
+    db.update_scan(old, "done", result={"grade": "C", "score": 70, "summary": {}})
+    running = db.create_scan(user, "site", "running.example.com")
+    recent = db.create_scan(user, "site", "new.example.com")
+    db.update_scan(recent, "done", result={"grade": "A", "score": 99, "summary": {}})
+    long_ago = time.time() - 200 * 86400
+    db._execute("UPDATE scans SET created_at=? WHERE id IN (?, ?)", (long_ago, old, running))
+
+    assert db.purge_expired(90) == 1
+    remaining = {s["id"] for s in db.list_scans(user)}
+    assert remaining == {running, recent}
+
+
+def test_retention_disabled_keeps_everything(client):
+    signup(client)
+    user = db.get_user_by_email("a@example.com")["id"]
+    scan_id = db.create_scan(user, "site", "old.example.com")
+    db.update_scan(scan_id, "done", result={"grade": "C", "score": 70, "summary": {}})
+    db._execute("UPDATE scans SET created_at=? WHERE id=?", (time.time() - 999 * 86400, scan_id))
+    assert db.purge_expired(0) == 0
+    assert len(db.list_scans(user)) == 1
+
+
+# --- public pages ---
+
+@pytest.mark.parametrize("slug", ["terms", "privacy", "acceptable-use", "security-policy"])
+def test_legal_pages_render(client, slug):
+    res = client.get(f"/{slug}")
+    assert res.status_code == 200 and "text/html" in res.headers["content-type"]
+    assert config.APP_NAME in res.text
+    assert "<script" not in res.text  # legal text is never executable
+
+
+def test_unknown_page_is_404(client):
+    assert client.get("/not-a-page").status_code == 404
+
+
+def test_health_robots_security_and_sitemap(client):
+    assert client.get("/healthz").json()["status"] == "ok"
+    assert "Disallow: /api/" in client.get("/robots.txt").text
+    security = client.get("/.well-known/security.txt").text
+    assert security.startswith("Contact: mailto:") and "Expires:" in security
+    assert "<urlset" in client.get("/sitemap.xml").text
+
+
+def test_code_scan_requires_ownership_attestation(client):
+    signup(client)
+    res = client.post("/api/code?filename=app.zip", content=b"PK\x03\x04")
+    assert res.status_code == 400 and "own this code" in res.json()["detail"]
+
+
+def test_production_config_check_flags_unsafe_settings(monkeypatch):
+    monkeypatch.setattr(config, "IS_PRODUCTION", True)
+    monkeypatch.setattr(config, "ALLOW_PRIVATE_TARGETS", True)
+    monkeypatch.setattr(config, "PUBLIC_URL", "http://example.com")
+    problems = " ".join(config.startup_problems())
+    assert "ALLOW_PRIVATE_TARGETS" in problems
+    assert "https" in problems
+    assert "placeholder" in problems

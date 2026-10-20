@@ -4,6 +4,9 @@ A security scanner for **websites, source code and mobile apps**. Customers get 
 every issue explains **what's wrong**, **why it matters**, and **how to fix it**, with copy-paste fixes for
 their stack.
 
+**Going live?** Work through [LAUNCH.md](LAUNCH.md) first — legal setup, required settings, and the
+things to fix before you scale.
+
 To rename the product, set `APP_NAME=YourName`. The UI, verification tokens and file names all follow it.
 
 ## Run it
@@ -11,6 +14,13 @@ To rename the product, set `APP_NAME=YourName`. The UI, verification tokens and 
 ```bash
 ./run.sh            # http://127.0.0.1:8000
 PORT=8765 ./run.sh  # if port 8000 is busy
+```
+
+In production, run it in Docker instead:
+
+```bash
+cp .env.example .env    # fill it in first
+docker compose up -d --build
 ```
 
 Try it on deliberately vulnerable demo targets:
@@ -131,8 +141,33 @@ How it's protected:
   SameSite cookies.
 - Rate limits: 20 log-in attempts per 15 min and 5 sign-ups per hour per IP, plus `SCANS_PER_HOUR` per account.
 
-Not built yet: password reset by email (needs an email provider such as Postmark, Resend or SES) and
-email verification at sign-up.
+- **Password reset** by email, with one-time links that expire in an hour and sign out every other session.
+  Requests answer identically whether or not the email exists, so the endpoint can't be used to discover
+  which addresses have accounts.
+
+Not built yet: email verification at sign-up, and two-factor authentication.
+
+## Compliance and legal
+
+The app serves four legal pages at `/terms`, `/privacy`, `/acceptable-use` and `/security-policy`, written
+in plain language and generated from `app/legal.py` with your business details filled in from the
+environment. **They are a starting point, not legal advice** — have a lawyer review them before you take
+customers. Placeholders you haven't filled in appear in square brackets on the live pages, and the app logs
+a warning about them on startup.
+
+What's built in:
+
+- **Consent is recorded.** Users must accept the Terms and Acceptable Use Policy to sign up, and the version
+  they accepted is stored with the timestamp. Bump `TERMS_VERSION` when you change them materially.
+- **Authorization is required and recorded.** Website scans need domain verification; code and app uploads
+  need an explicit "I own this or am authorized" confirmation, stored on the scan record.
+- **Data export** (GDPR portability): Dashboard → Account & privacy → Download my data returns everything
+  held about the account as JSON.
+- **Data deletion**: deleting an account removes the account, its verified domains and every report.
+- **Retention**: reports are deleted automatically after `RETENTION_DAYS` (default 90). Set it to 0 to keep
+  them until the user deletes them — and make sure the Privacy Policy matches whatever you choose.
+- **No tracking.** One strictly necessary session cookie, no analytics, no advertising, so no consent banner.
+- **`security.txt`** at `/.well-known/security.txt` (RFC 9116) pointing at your security contact.
 
 ## Website ownership verification
 
@@ -157,18 +192,23 @@ and it protects you legally: scanning sites without the owner's permission can b
 
 ## Going to production
 
+See [LAUNCH.md](LAUNCH.md) for the full checklist. The essentials:
+
 1. Set `SECRET_KEY` to a long random value. Verification tokens are derived from it, so if it changes,
    every customer has to verify again.
-2. Run behind HTTPS (Caddy/Nginx/a PaaS) with several workers: `uvicorn app.main:app --workers 4`.
+2. Set `PUBLIC_URL` to your real `https://` address, and run behind HTTPS (Caddy/Nginx/a PaaS).
 3. **Never** set `ALLOW_PRIVATE_TARGETS=1` in production.
-4. Publish terms of service saying customers may only scan assets they own or are authorized to test, and a
-   privacy policy that says which AI provider (if any) sees uploaded code.
+4. Fill in every business detail in `.env`; they appear in your public legal pages.
+5. Mount a persistent volume at `/data` and back it up.
+
+`/healthz` is a health check for your host or load balancer.
 
 ## Ideas for next steps
 
+- Email verification at sign-up, and two-factor authentication.
 - GitHub/GitLab integration: connect a repo (OAuth proves access) and re-scan on every push / pull request.
-- Password reset and email verification (needs an email provider).
 - Scheduled re-scans with email alerts when the grade drops or a certificate is about to expire.
 - Stripe billing (free single scan, paid monitoring, AI review on paid plans).
 - A job queue (Redis + RQ/Celery) instead of in-process tasks, so scans survive restarts and scale.
+- PostgreSQL instead of SQLite once you run more than one server.
 - Pin the resolved IP for the whole request to close the DNS-rebinding gap in the SSRF guard.

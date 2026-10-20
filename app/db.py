@@ -41,7 +41,19 @@ CREATE TABLE IF NOT EXISTS verified_domains (
     verified_at REAL NOT NULL,
     PRIMARY KEY (user_id, host)
 );
+CREATE TABLE IF NOT EXISTS password_resets (
+    token_hash TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    expires_at REAL NOT NULL,
+    used INTEGER NOT NULL DEFAULT 0
+);
 """
+
+# Columns added after the first release; created on startup if an older database lacks them.
+MIGRATIONS = {
+    "users": {"terms_version": "TEXT", "terms_accepted_at": "REAL"},
+    "scans": {"attested": "INTEGER NOT NULL DEFAULT 0"},
+}
 
 _lock = threading.Lock()
 _conn: sqlite3.Connection | None = None
@@ -54,7 +66,14 @@ def init() -> None:
     _conn.row_factory = sqlite3.Row
     with _lock:
         _conn.execute("PRAGMA foreign_keys = ON")
+        _conn.execute("PRAGMA journal_mode = WAL")  # lets several server workers share the file
+        _conn.execute("PRAGMA busy_timeout = 5000")
         _conn.executescript(SCHEMA)
+        for table, columns in MIGRATIONS.items():
+            existing = {row["name"] for row in _conn.execute(f"PRAGMA table_info({table})")}
+            for column, definition in columns.items():
+                if column not in existing:
+                    _conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
         # Scans that were running when the server stopped will never finish.
         _conn.execute("UPDATE scans SET status='failed', error='Server restarted' WHERE status IN ('queued','running')")
         _conn.execute("DELETE FROM sessions WHERE expires_at < ?", (time.time(),))
@@ -81,11 +100,12 @@ def _all(sql: str, params: tuple = ()) -> list[dict]:
 
 # --- users & sessions ---
 
-def create_user(email: str, password_hash: str) -> int | None:
-    """Returns the new user's id, or None if the email is taken."""
+def create_user(email: str, password_hash: str, terms_version: str) -> int | None:
+    """Returns the new user's id, or None if the email is taken. Records which Terms they accepted, and when."""
+    now = time.time()
     try:
-        cur = _execute("INSERT INTO users (email, password_hash, created_at) VALUES (?, ?, ?)",
-                       (email, password_hash, time.time()))
+        cur = _execute("INSERT INTO users (email, password_hash, created_at, terms_version, terms_accepted_at) "
+                       "VALUES (?, ?, ?, ?, ?)", (email, password_hash, now, terms_version, now))
     except sqlite3.IntegrityError:
         return None
     return cur.lastrowid
@@ -130,10 +150,11 @@ def delete_user_sessions(user_id: int) -> None:
 
 # --- scans ---
 
-def create_scan(user_id: int, kind: str, target: str) -> str:
+def create_scan(user_id: int, kind: str, target: str, attested: bool = False) -> str:
+    """`attested` records that the user confirmed they own (or may scan) an uploaded codebase or app."""
     scan_id = uuid.uuid4().hex
-    _execute("INSERT INTO scans (id, user_id, kind, target, status, created_at) VALUES (?, ?, ?, ?, 'queued', ?)",
-             (scan_id, user_id, kind, target, time.time()))
+    _execute("INSERT INTO scans (id, user_id, kind, target, status, created_at, attested) "
+             "VALUES (?, ?, ?, ?, 'queued', ?, ?)", (scan_id, user_id, kind, target, time.time(), int(attested)))
     return scan_id
 
 
@@ -201,3 +222,46 @@ def list_domains(user_id: int) -> list[dict]:
 
 def delete_domain(user_id: int, host: str) -> bool:
     return _execute("DELETE FROM verified_domains WHERE user_id=? AND host=?", (user_id, host)).rowcount > 0
+
+
+# --- password resets ---
+
+def create_reset(token_hash: str, user_id: int, expires_at: float) -> None:
+    _execute("DELETE FROM password_resets WHERE user_id=?", (user_id,))  # only the newest link works
+    _execute("INSERT INTO password_resets (token_hash, user_id, expires_at) VALUES (?, ?, ?)",
+             (token_hash, user_id, expires_at))
+
+
+def consume_reset(token_hash: str) -> int | None:
+    """Marks a valid, unused, unexpired token as used and returns its user id."""
+    with _lock:
+        row = _conn.execute("SELECT user_id FROM password_resets WHERE token_hash=? AND used=0 AND expires_at > ?",
+                            (token_hash, time.time())).fetchone()
+        if row is None:
+            return None
+        _conn.execute("UPDATE password_resets SET used=1 WHERE token_hash=?", (token_hash,))
+        _conn.commit()
+        return row["user_id"]
+
+
+# --- privacy: retention and export ---
+
+def purge_expired(retention_days: int) -> int:
+    """Deletes expired sessions/reset links and reports older than the retention period. Returns reports deleted."""
+    now = time.time()
+    _execute("DELETE FROM sessions WHERE expires_at < ?", (now,))
+    _execute("DELETE FROM password_resets WHERE expires_at < ? OR used=1", (now,))
+    if retention_days <= 0:
+        return 0
+    return _execute("DELETE FROM scans WHERE created_at < ? AND status NOT IN ('queued', 'running')",
+                    (now - retention_days * 86400,)).rowcount
+
+
+def export_user(user_id: int) -> dict:
+    user = _one("SELECT email, created_at, terms_version, terms_accepted_at FROM users WHERE id=?", (user_id,))
+    domains = _all("SELECT host, method, verified_at FROM verified_domains WHERE user_id=? ORDER BY host", (user_id,))
+    scans = _all("SELECT id, kind, target, status, created_at, attested, result, error FROM scans "
+                 "WHERE user_id=? ORDER BY created_at DESC", (user_id,))
+    for scan in scans:
+        scan["result"] = json.loads(scan["result"]) if scan["result"] else None
+    return {"account": user, "verified_domains": domains, "scans": scans}

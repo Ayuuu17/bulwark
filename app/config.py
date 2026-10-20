@@ -37,6 +37,32 @@ AI_BATCH_CHARS = int(os.getenv("AI_BATCH_CHARS", "24000"))  # code per request; 
 AI_CONCURRENCY = int(os.getenv("AI_CONCURRENCY", "2"))
 AI_TIMEOUT = float(os.getenv("AI_TIMEOUT", "300"))
 
+AI_PROVIDER_NAME = os.getenv("AI_PROVIDER_NAME", "")  # shown in the Privacy Policy, e.g. "OpenAI"
+
+# Public address of the site (used in password-reset emails and security.txt).
+PUBLIC_URL = os.getenv("PUBLIC_URL", "http://127.0.0.1:8000").rstrip("/")
+
+# Business details shown in the Terms, Privacy Policy and security.txt. Fill these in before launch.
+LEGAL_ENTITY = os.getenv("LEGAL_ENTITY", "[Your company name]")
+CONTACT_EMAIL = os.getenv("CONTACT_EMAIL", "[contact email]")
+SECURITY_EMAIL = os.getenv("SECURITY_EMAIL", CONTACT_EMAIL)
+PRIVACY_EMAIL = os.getenv("PRIVACY_EMAIL", CONTACT_EMAIL)
+GOVERNING_LAW = os.getenv("GOVERNING_LAW", "[your state / country]")
+LEGAL_EFFECTIVE_DATE = os.getenv("LEGAL_EFFECTIVE_DATE", "[effective date]")
+HOSTING_PROVIDER = os.getenv("HOSTING_PROVIDER", "[hosting provider]")
+EMAIL_PROVIDER = os.getenv("EMAIL_PROVIDER", "[email provider]")
+TERMS_VERSION = os.getenv("TERMS_VERSION", "2026-10-20")  # bump when the Terms change; stored per user
+
+# Reports older than this are deleted automatically (0 keeps them until the user deletes them).
+RETENTION_DAYS = int(os.getenv("RETENTION_DAYS", "90"))
+
+# Outgoing email for password resets (any SMTP provider: Postmark, Resend, SES, Mailgun...).
+SMTP_HOST = os.getenv("SMTP_HOST", "")
+SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+SMTP_USER = os.getenv("SMTP_USER", "")
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
+MAIL_FROM = os.getenv("MAIL_FROM", "")
+
 USER_AGENT = f"{APP_NAME}-Scanner/1.0 (security configuration check)"
 HTTP_TIMEOUT = float(os.getenv("HTTP_TIMEOUT", "10"))
 MAX_BODY_BYTES = 2_000_000
@@ -56,3 +82,31 @@ def _load_secret() -> str:
 
 
 SECRET_KEY = _load_secret()
+
+# Production = anything not served from localhost. Set PUBLIC_URL and the app checks itself on boot.
+IS_PRODUCTION = not any(host in PUBLIC_URL for host in ("localhost", "127.0.0.1", "[::1]"))
+
+
+def startup_problems() -> list[str]:
+    """Settings that are unsafe or incomplete for a public deployment."""
+    problems = []
+    if not IS_PRODUCTION:
+        return problems
+    if ALLOW_PRIVATE_TARGETS:
+        problems.append("ALLOW_PRIVATE_TARGETS is on. Anyone could use your scanner to reach your internal "
+                        "network. Remove it before going live.")
+    if not os.getenv("SECRET_KEY"):
+        problems.append("SECRET_KEY isn't set, so it was generated into DATA_DIR. That's fine for one server "
+                        "with a persistent disk, but set it explicitly before scaling to several.")
+    if not PUBLIC_URL.startswith("https://"):
+        problems.append("PUBLIC_URL isn't https://. Login cookies need HTTPS to be marked Secure.")
+    for name, value in (("LEGAL_ENTITY", LEGAL_ENTITY), ("CONTACT_EMAIL", CONTACT_EMAIL),
+                        ("GOVERNING_LAW", GOVERNING_LAW), ("LEGAL_EFFECTIVE_DATE", LEGAL_EFFECTIVE_DATE)):
+        if value.startswith("["):
+            problems.append(f"{name} is still a placeholder; it appears in your public legal pages.")
+    if not (SMTP_HOST and MAIL_FROM):
+        problems.append("Email isn't configured (SMTP_HOST, MAIL_FROM), so password resets can't be sent.")
+    if AI_ENABLED and not AI_PROVIDER_NAME:
+        problems.append("AI review is on but AI_PROVIDER_NAME is empty; your Privacy Policy should name the "
+                        "provider that receives customer code.")
+    return problems

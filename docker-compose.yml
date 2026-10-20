@@ -1,0 +1,14 @@
+services:
+  bulwark:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "127.0.0.1:8000:8000"   # put a TLS-terminating proxy (Caddy, Nginx, Cloudflare) in front
+    volumes:
+      - bulwark-data:/data
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  bulwark-data:
