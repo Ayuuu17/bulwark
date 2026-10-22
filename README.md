@@ -1,13 +1,119 @@
 # Bulwark
 
-A security scanner for **websites, source code and mobile apps**. Customers get a graded report where
-every issue explains **what's wrong**, **why it matters**, and **how to fix it**, with copy-paste fixes for
-their stack.
+**A security scanner for websites, source code and mobile apps that explains every finding in plain
+English and hands you the fix.**
 
-**Going live?** Work through [LAUNCH.md](LAUNCH.md) first — legal setup, required settings, and the
-things to fix before you scale.
+Most security tools are built for people who already know security. They output CWE identifiers and
+CVSS vectors and leave you to work out what to actually change. Bulwark is built for the developer who
+shipped the app: every finding says what was found, why it matters in concrete terms, and exactly what
+to paste where.
 
-To rename the product, set `APP_NAME=YourName`. The UI, verification tokens and file names all follow it.
+![Bulwark landing page](docs/screenshots/landing.jpg)
+
+| | |
+|---|---|
+| **Stack** | Python 3.12 · FastAPI · SQLite · vanilla JS (no framework, no build step) |
+| **Size** | ~8,300 lines · 99 tests |
+| **Detection** | 31 code rules · 15 secret patterns · 17 lockfile formats · 20 languages |
+| **Data sources** | [OSV.dev](https://osv.dev) vulnerability database · Apple iTunes Lookup API · public DNS |
+
+---
+
+## What it scans
+
+**1 · A live website.** HTTPS and certificate health, security headers, cookie flags, mixed content,
+outdated JavaScript libraries, and the DNS records that stop people sending fake email as your domain.
+
+**2 · A published mobile app** — paste its App Store or Google Play link, nothing to upload. Privacy
+policy health, release staleness, Google Play data-safety disclosures, and the App Links files where
+deep-link hijacking shows up.
+
+**3 · Source code or a build** — upload a `.zip`, `.apk` or `.ipa`. Leaked credentials, injection and
+XSS patterns, unsafe crypto, risky Android/iOS configuration, open Firebase databases, and every
+dependency in the project. Optionally an AI model reviews the riskiest files for logic flaws rules
+can't see.
+
+**4 · A single lockfile** — the dependency check on its own.
+
+| A code report | A published-app report |
+|---|---|
+| ![Code report](docs/screenshots/code-report.jpg) | ![Store report](docs/screenshots/store-report.jpg) |
+
+---
+
+## How it works
+
+```mermaid
+flowchart LR
+    U[Browser] -->|"URL, store link<br/>or upload"| API[FastAPI]
+    API --> AUTH[Accounts + ownership<br/>verification]
+    AUTH --> Q[Background task]
+
+    Q --> W[Website engine]
+    Q --> S[Store engine]
+    Q --> C[Code engine]
+
+    W --> G{{SSRF guard}}
+    S --> G
+    C --> AR[Archive reader<br/>in memory]
+
+    G -->|"every redirect hop<br/>re-resolved"| NET[(Target)]
+    AR --> RULES[AST + pattern rules]
+    AR --> SEC[Secret detection]
+    AR --> OSV[(OSV.dev)]
+    AR -.optional.-> AI[AI review<br/>any OpenAI-compatible API]
+
+    RULES --> R[Report]
+    SEC --> R
+    OSV --> R
+    AI --> R
+    W --> R
+    S --> R
+    R --> DB[(SQLite)]
+    R --> U
+```
+
+Every scan produces the same `Finding` shape — severity, what we found, why it matters, how to fix it,
+copy-paste snippets per platform — so one renderer handles all four scan types, and the score and grade
+are computed the same way everywhere.
+
+### Things that were harder than they look
+
+**The scanner is itself an attack surface.** A service that fetches user-supplied URLs is a classic
+[SSRF](https://owasp.org/Top10/A10_2021-Server-Side_Request_Forgery_%28SSRF%29/) target: point it at
+`http://169.254.169.254/` and it reads cloud credentials for you. `app/safety.py` resolves every host,
+rejects private, loopback, reserved and link-local addresses, and `app/http_client.py` re-runs that
+check on **every redirect hop** rather than trusting the first one.
+
+**Regex is not enough for code analysis.** Python files are parsed into a real syntax tree with the
+stdlib `ast` module and walked node by node, so `cursor.execute(f"... {uid}")` is flagged while
+`cursor.execute("...", (uid,))` is not. Other languages use pattern rules with context requirements and
+suppressions. Test directories are excluded so fixture passwords don't drown the report.
+
+**Android ships its manifest as compiled binary XML.** There's no readable `AndroidManifest.xml` inside
+an APK. `app/code/axml.py` is a from-scratch decoder for Android's binary XML format — string pool,
+resource map, chunk headers — written against `struct`, including the fallback to framework attribute
+IDs for when obfuscators blank out attribute names.
+
+**Uploads are hostile input.** Archives are read entirely in memory and never written to disk, so
+`../../etc/passwd` entries are inert. Compression ratios are checked before reading to stop zip bombs.
+
+**LLM output is untrusted too.** AI findings must point at a file that was actually sent, line numbers
+are range-checked against the real file, every field is length-capped, and findings that duplicate a
+rule hit are dropped. The prompt tells the model the code is data, not instructions.
+
+**The product passes its own scan.** Scrypt password hashing, session tokens stored only as SHA-256
+hashes, `Sec-Fetch-Site` CSRF checks, a strict Content-Security-Policy, and report content rendered as
+text nodes rather than HTML.
+
+### Honest limits
+
+Automated scanning finds common, well-understood problems. It does not replace a manual penetration
+test. The store scanner reads published listings and App Links files — **neither store offers an API to
+download an app binary, and App Store downloads are encrypted**, so code-level checks need a build or
+the source.
+
+---
 
 ## Run it
 
@@ -23,7 +129,7 @@ cp .env.example .env    # fill it in first
 docker compose up -d --build
 ```
 
-Try it on deliberately vulnerable demo targets:
+Try it on deliberately vulnerable demo targets built for the test suite:
 
 ```bash
 .venv/bin/python tests/demo_target.py                   # broken website on http://127.0.0.1:8899
@@ -31,7 +137,37 @@ Try it on deliberately vulnerable demo targets:
 PORT=8765 ./run.sh --dev                                # --dev allows scanning localhost
 ```
 
-Tests: `.venv/bin/python -m pytest -q`
+The demo project scores **F with 35 findings**, including real CVEs pulled live from OSV.dev.
+
+Tests: `.venv/bin/python -m pytest -q` (99 tests, no network required)
+
+**Deploying for real?** Work through [LAUNCH.md](LAUNCH.md) — legal setup, required settings, and what
+to fix before scaling. To rename the product, set `APP_NAME=YourName`; the UI, verification tokens and
+file names all follow it.
+
+## Repository layout
+
+```
+app/
+  main.py          FastAPI routes, security headers, CSRF, rate limits
+  safety.py        SSRF guard: host resolution and address filtering
+  http_client.py   fetching that re-checks every redirect hop
+  engine.py        website scan orchestration
+  store.py         App Store / Google Play scanning + App Links checks
+  deps.py          17 lockfile parsers -> OSV.dev lookups
+  auth.py db.py    accounts, sessions, SQLite storage
+  legal.py         Terms, Privacy, Acceptable Use, Security pages
+  checks/          website checks: TLS, headers, cookies, content, DNS
+  code/
+    archive.py     safe in-memory zip/apk/ipa reading
+    axml.py        Android binary XML decoder
+    rules.py       Python AST analysis + pattern rules for 20 languages
+    secrets.py     credential detection with redaction
+    mobile.py      Android/iOS/Firebase/Docker configuration checks
+    ai_review.py   provider-agnostic AI review with output validation
+static/            the whole frontend: one HTML, one CSS, one JS file
+tests/             99 tests, plus generators for vulnerable demo targets
+```
 
 ## Four kinds of scan
 
