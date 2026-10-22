@@ -3,9 +3,11 @@
 const SEVERITIES = ["critical", "high", "medium", "low", "info"];
 const SECTIONS = ["start", "auth", "dashboard", "verify", "progress", "report"];
 const METHOD_LABEL = { dns: "DNS record", file: "file upload", local: "local dev" };
-const KIND_LABEL = { site: "Website report", deps: "Dependency report", code: "Code report", app: "App report" };
-const KIND_SUFFIX = { site: "", deps: " · dependencies", code: " · code", app: " · app" };
+const KIND_LABEL = { site: "Website report", deps: "Dependency report", code: "Code report",
+  app: "App build report", store: "Published app report" };
+const KIND_SUFFIX = { site: "", deps: " · dependencies", code: " · code", app: " · build", store: " · store listing" };
 const RING_LENGTH = 326.73; // circumference of the grade ring (r = 52)
+const REDUCED_MOTION = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 const $ = (id) => document.getElementById(id);
 
 let appName = "Bulwark";
@@ -108,6 +110,47 @@ function formatDate(seconds) {
 function setStatus(el, message, ok) {
   el.textContent = message;
   el.className = `form-status ${ok ? "good" : "bad"}`;
+}
+
+/* ---------- hero: a sample report, drawn line by line ---------- */
+
+// An abbreviated version of a real website report, so the landing page shows the actual output.
+const SAMPLE_REPORT = [
+  ["cmd", "scan example.com"],
+  ["dim", "ownership verified · non-intrusive checks"],
+  ["ok", "TLS 1.3 · certificate valid 74 more days"],
+  ["ok", "HTTP redirects to HTTPS"],
+  ["warn", "Content-Security-Policy header missing"],
+  ["bad", "Session cookie missing the Secure flag"],
+  ["warn", "jquery 3.4.1 · 2 known vulnerabilities"],
+  ["ok", "SPF and DMARC published"],
+  ["dim", "8 checks · 2 warnings · 1 failure"],
+  ["grade", "B"],
+];
+
+function drawSampleReport() {
+  const list = $("scanlines");
+  if (!list) return;
+  const node = ([kind, text]) => kind === "grade"
+    ? h("li", { class: "line grade-line" }, "grade ", h("b", { class: "grade-B" }, text),
+      h("span", { class: "dim" }, "  → fix 2 issues to reach A"))
+    : h("li", { class: `line ${kind}` }, text);
+
+  if (REDUCED_MOTION) {
+    list.replaceChildren(...SAMPLE_REPORT.map(node));
+    return;
+  }
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  (async function loop() {
+    for (;;) {
+      list.replaceChildren();
+      for (const line of SAMPLE_REPORT) {
+        list.append(node(line));
+        await sleep(line[0] === "cmd" ? 700 : 320);
+      }
+      await sleep(6000);
+    }
+  })();
 }
 
 /* ---------- accounts ---------- */
@@ -297,6 +340,27 @@ function wireDropzone(input, onFile) {
   });
 }
 
+function onStoreSubmit(event) {
+  event.preventDefault();
+  $("form-error").hidden = true;
+  const url = $("store-url").value.trim();
+  if (!url) return showError("Paste your app's App Store or Google Play link.");
+  if (!me) return requireLogin("Create a free account to scan your published app.", () => submitStore(url));
+  submitStore(url, event.submitter);
+}
+
+async function submitStore(url, button) {
+  if (button) button.disabled = true;
+  try {
+    const { id } = await api("/api/store", { body: { url } });
+    go(`#scan=${id}`);
+  } catch (err) {
+    fail(err);
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
 function setFile(file) {
   selectedFile = file || null;
   $("dropzone-title").textContent = file ? file.name : "Choose a file or drop it here";
@@ -412,6 +476,8 @@ const PROGRESS_STEPS = {
     "Checking app and cloud configuration", "Looking up dependencies", "Finishing up"],
   app: ["Unpacking app in memory", "Decoding app configuration", "Searching for embedded secrets",
     "Checking for insecure endpoints"],
+  store: ["Reading the store listing", "Checking the privacy policy link", "Reading data-safety disclosures",
+    "Fetching App Links files", "Finding backend domains"],
   deps: ["Reading dependency file", "Querying the vulnerability database", "Matching fixed versions"],
 };
 
@@ -589,13 +655,20 @@ function renderReport(result) {
     ring.style.setProperty("stroke-dashoffset", String(RING_LENGTH * (1 - result.score / 100)))));
 
   $("report-kind").textContent = KIND_LABEL[result.kind] || "Report";
-  $("report-target").textContent = result.kind === "site" ? result.final_url || result.target : result.target;
+  $("report-target").textContent = result.kind === "site" ? result.final_url || result.target
+    : result.kind === "store" ? `${result.app_name} (${result.app_id})`
+      : result.target;
   const meta = [`Score ${result.score}/100`];
   if (result.kind === "deps") meta.push(`${result.packages_scanned} packages checked (${result.ecosystem})`);
   if (result.kind === "code") {
     meta.push(`${result.files_scanned} files`);
     if (result.languages.length) meta.push(result.languages.join(", "));
     if (result.packages_scanned) meta.push(`${result.packages_scanned} dependencies`);
+  }
+  if (result.kind === "store") {
+    if (result.app_version) meta.push(`v${result.app_version}`);
+    if (result.developer) meta.push(result.developer);
+    if (result.last_updated) meta.push(`updated ${result.last_updated}`);
   }
   if (result.platforms && result.platforms.length) meta.push(result.platforms.join(" + "));
   if (result.scanned_at) meta.push(new Date(result.scanned_at).toLocaleString());
@@ -617,7 +690,7 @@ function renderReport(result) {
   }, sev === "all" ? `All (${result.findings.length})` : `${sev[0].toUpperCase()}${sev.slice(1)} (${result.summary[sev]})`)));
 
   $("findings").replaceChildren(...(result.findings.length
-    ? result.findings.map(renderFinding)
+    ? result.findings.map((finding, i) => renderFinding(finding, i, result))
     : [h("div", { class: "card empty" }, "No issues found. Nice work!")]));
 
   $("passed-summary").textContent = `Passed checks (${result.passed.length})`;
@@ -633,12 +706,25 @@ function applyFilter(sev) {
   document.querySelectorAll(".finding").forEach((card) => { card.hidden = sev !== "all" && card.dataset.sev !== sev; });
 }
 
-function renderFinding(finding, index) {
+// A store report lists the app's backend domains; turn them into one-click website scans.
+function backendActions(result) {
+  return h("div", { class: "row inline-actions" }, ...result.backend_domains.map((host) =>
+    h("button", {
+      type: "button",
+      class: "btn small primary",
+      onclick: () => beginSiteScan(`https://${host}`),
+    }, `Scan ${host}`)));
+}
+
+function renderFinding(finding, index, result) {
+  const extra = finding.id === "store-backend-next-step" && result && result.backend_domains
+    && result.backend_domains.length ? backendActions(result) : null;
   const body = h("div", { class: "finding-body" },
     h("h4", {}, "What we found"), h("p", {}, richText(finding.description)),
     finding.evidence && [h("h4", {}, "Evidence"), h("pre", { class: "evidence" }, finding.evidence)],
     h("h4", {}, "Why it matters"), h("p", {}, richText(finding.impact)),
     h("h4", {}, "How to fix it"), h("p", {}, richText(finding.fix)),
+    extra,
     Object.keys(finding.snippets).length > 0 && renderSnippets(finding.snippets),
     finding.references.length > 0 && [
       h("h4", {}, "Learn more"),
@@ -707,6 +793,9 @@ document.addEventListener("DOMContentLoaded", async () => {
     btn.addEventListener("click", () => copyText($(btn.dataset.copy).textContent, btn)));
 
   $("code-form").addEventListener("submit", onCodeSubmit);
+  $("store-form").addEventListener("submit", onStoreSubmit);
+  document.querySelectorAll("[data-goto-tab]").forEach((btn) =>
+    btn.addEventListener("click", () => selectTab(btn.dataset.gotoTab)));
   wireDropzone($("manifest"), setFile);
   wireDropzone($("code-file"), setCodeFile);
 
@@ -717,6 +806,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
   window.addEventListener("hashchange", route);
   route();
+  drawSampleReport();
 
   try {
     const cfg = await api("/api/config");

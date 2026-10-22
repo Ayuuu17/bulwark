@@ -33,7 +33,7 @@ PORT=8765 ./run.sh --dev                                # --dev allows scanning 
 
 Tests: `.venv/bin/python -m pytest -q`
 
-## Three kinds of scan
+## Four kinds of scan
 
 ### 1. Website (live site)
 
@@ -51,7 +51,29 @@ These checks are **non-intrusive**: they only look at what the site already serv
 public DNS. Nothing tries to exploit, log in, fuzz, or guess hidden paths. Scanning requires proof of
 domain ownership (below).
 
-### 2. Code & apps (upload a `.zip`, `.apk` or `.ipa`)
+### 2. Published app (paste an App Store or Google Play link)
+
+Zero friction: no upload, no build, no SDK. Paste the store link and we read:
+
+- **Privacy policy**: present, HTTPS, and actually loading. A dead link gets apps removed from both stores.
+- **Release freshness**: an app last shipped 18 months ago is still serving every vulnerability found in its
+  SDKs since then, and neither store patches apps for you.
+- **Google Play Data safety**: the form is completed, declares encryption in transit, and offers a deletion path.
+- **iOS minimum version**: apps still supporting iOS versions Apple no longer patches.
+- **App Links** (`assetlinks.json` and `apple-app-site-association` on the developer's own domains): missing,
+  mismatched, or claiming every path with a wildcard. This is where **deep-link hijacking** shows up — on
+  Android an unverified domain can be claimed by another app, which is how password-reset links get stolen.
+- **Backend discovery**: the domains the listing points at, with one-click website scans for each.
+
+**What it cannot do, honestly:** download and decompile the app binary. Neither store offers an API for
+that, and App Store downloads are DRM-encrypted, so the binary would be unreadable even if you had it.
+Tools that claim otherwise are scraping APK mirror sites, which breaks those sites' terms and can serve
+modified apps. For what's inside the binary, upload a build or scan your source.
+
+Sources used: Apple's official [iTunes Lookup API](https://performance-partners.apple.com/search-api), the
+public Google Play listing page, and App Links files, which phones fetch themselves.
+
+### 3. Source code and builds (upload a `.zip`, `.apk` or `.ipa`)
 
 **Source code (.zip of the project, e.g. GitHub's "Download ZIP")**
 
@@ -81,7 +103,7 @@ secrets and `http://` endpoints. App Store downloads are encrypted, so upload a 
 Uploads are processed **in memory and never written to disk or stored**. Zip bombs and `../` paths are
 handled safely. The size limit is `MAX_CODE_UPLOAD_MB` (default 100).
 
-### 3. Dependencies (single lockfile)
+### 4. Dependencies (single lockfile)
 
 The same dependency check as above, for one uploaded lockfile or manifest.
 

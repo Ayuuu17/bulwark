@@ -12,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import auth, config, db, legal, mailer, verification
+from .store import StoreError, parse_target, run_store_scan
 from .code.archive import ArchiveError, detect_kind
 from .code.engine import run_code_scan
 from .deps import SUPPORTED_FILES, ManifestError, run_dependency_scan
@@ -116,7 +117,7 @@ def run_in_background(scan_id: str, coro) -> None:
         db.update_scan(scan_id, "running")
         try:
             db.update_scan(scan_id, "done", result=await coro)
-        except (ScanError, UnsafeTargetError, ManifestError, ArchiveError) as exc:
+        except (ScanError, UnsafeTargetError, ManifestError, ArchiveError, StoreError) as exc:
             db.update_scan(scan_id, "failed", error=str(exc))
         except Exception:
             log.exception("scan %s crashed", scan_id)
@@ -351,6 +352,21 @@ async def start_dependency_scan(body: ManifestIn, user: dict = Depends(auth.curr
     enforce_scan_quota(user["id"])
     scan_id = db.create_scan(user["id"], "deps", body.filename)
     run_in_background(scan_id, run_dependency_scan(body.filename, body.content))
+    return {"id": scan_id}
+
+
+@app.post("/api/store", status_code=202)
+async def start_store_scan(body: UrlIn, user: dict = Depends(auth.current_user)):
+    """Scan a published app from its store link. Reads public listing data only, so no verification
+    is needed — but the backend domains it finds still require ownership proof to scan."""
+    try:
+        platform, identifier, _ = parse_target(body.url)
+    except StoreError as exc:
+        raise HTTPException(400, str(exc))
+    enforce_scan_quota(user["id"])
+    label = f"{identifier} ({'iOS' if platform == 'ios' else 'Android'})"
+    scan_id = db.create_scan(user["id"], "store", label)
+    run_in_background(scan_id, run_store_scan(body.url))
     return {"id": scan_id}
 
 

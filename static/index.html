@@ -45,6 +45,14 @@
             <li>Non-intrusive checks</li>
           </ul>
         </div>
+
+        <aside class="scanview" aria-label="Example of a finished report">
+          <div class="scanview-bar">
+            <span class="dot red"></span><span class="dot amber"></span><span class="dot green"></span>
+            <span class="scanview-title mono">report · example.com</span>
+          </div>
+          <ol class="scanlines mono" id="scanlines"></ol>
+        </aside>
       </div>
 
       <div class="stats">
@@ -59,7 +67,8 @@
           <span class="mono muted">&gt; choose a target</span>
           <div class="tabs" role="tablist">
             <button type="button" role="tab" class="tab" aria-selected="true" data-tab="site">Website</button>
-            <button type="button" role="tab" class="tab" aria-selected="false" data-tab="code">Code &amp; apps</button>
+            <button type="button" role="tab" class="tab" aria-selected="false" data-tab="store">Published app</button>
+            <button type="button" role="tab" class="tab" aria-selected="false" data-tab="code">Source code</button>
             <button type="button" role="tab" class="tab" aria-selected="false" data-tab="deps">Dependencies</button>
           </div>
         </div>
@@ -75,13 +84,29 @@
             permission, and our checks only look at what your site already shows every visitor.</p>
         </form>
 
+        <form id="store-form" class="panel" data-panel="store" hidden novalidate>
+          <label for="store-url" class="label">App Store or Google Play link</label>
+          <div class="row">
+            <input id="store-url" name="store-url" type="text" inputmode="url" spellcheck="false"
+                   placeholder="https://play.google.com/store/apps/details?id=com.yourapp" required>
+            <button type="submit" class="btn primary">Scan app</button>
+          </div>
+          <p class="hint">Nothing to upload. We read your published listing, your privacy and data-safety
+            disclosures, how long it's been since your last release, and the App Links files on your own
+            domains — where deep-link hijacking shows up.</p>
+          <p class="callout"><strong>Straight answer on what this can't see:</strong> neither store lets
+            anyone download an app binary through an API, and App Store downloads are encrypted. To check
+            the code itself, use <button type="button" class="linkish" data-goto-tab="code">Source
+            code</button>.</p>
+        </form>
+
         <form id="code-form" class="panel" data-panel="code" hidden novalidate>
-          <span class="label">Your code or app</span>
+          <span class="label">Your code or a build</span>
           <label class="dropzone" for="code-file">
             <input type="file" id="code-file" accept=".zip,.apk,.ipa">
             <span class="drop-icon" aria-hidden="true"></span>
             <strong id="code-drop-title">Choose a file or drop it here</strong>
-            <span class="muted small">Project source as a .zip (any language) · Android .apk · iOS .ipa</span>
+            <span class="muted small">Project source as a .zip (any language) · or a build: Android .apk · iOS .ipa</span>
           </label>
           <label id="ai-option" class="check" hidden>
             <input type="checkbox" id="code-ai" checked>
@@ -117,11 +142,13 @@
         <p class="eyebrow">How it works</p>
         <h2>Three steps from "is this safe?" to fixed.</h2>
         <div class="steps">
-          <div class="step"><span class="step-num">01</span><h3>Connect</h3>
-            <p>Verify your domain with a DNS record or file, or upload your project as a .zip, .apk or .ipa.</p></div>
+          <div class="step"><span class="step-num">01</span><h3>Point us at it</h3>
+            <p>A website you've verified, your published app's store link, or your project as a .zip.</p></div>
           <div class="step"><span class="step-num">02</span><h3>Scan</h3>
             <p>30+ rules, a secret detector, app-config checks and a vulnerability database run in seconds. An
               optional AI reviewer looks for logic flaws.</p></div>
+          <div class="step"><span class="step-num">02b</span><h3>Or just paste a store link</h3>
+            <p>Published on the App Store or Google Play? Paste the link. No upload, no build, no setup.</p></div>
           <div class="step"><span class="step-num">03</span><h3>Fix</h3>
             <p>Each finding explains the risk in plain English and gives copy-paste fixes for your stack. Re-scan
               to confirm.</p></div>
