@@ -1,5 +1,7 @@
 # Bulwark
 
+[![tests](https://github.com/Ayuuu17/bulwark/actions/workflows/tests.yml/badge.svg)](https://github.com/Ayuuu17/bulwark/actions/workflows/tests.yml)
+
 **A security scanner for websites, source code and mobile apps that explains every finding in plain
 English and hands you the fix.**
 
@@ -139,7 +141,8 @@ PORT=8765 ./run.sh --dev                                # --dev allows scanning 
 
 The demo project scores **F with 35 findings**, including real CVEs pulled live from OSV.dev.
 
-Tests: `.venv/bin/python -m pytest -q` (99 tests, no network required)
+Tests: `.venv/bin/python -m pytest -q` — 99 tests, no API keys needed. They run on every push via
+[GitHub Actions](.github/workflows/tests.yml), which also starts the app and checks its health endpoint.
 
 **Deploying for real?** Work through [LAUNCH.md](LAUNCH.md) — legal setup, required settings, and what
 to fix before scaling. To rename the product, set `APP_NAME=YourName`; the UI, verification tokens and
